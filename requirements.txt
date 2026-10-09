@@ -1,28 +1,20 @@
-# TripGenie Requirements
+# Run the app:  pip install -r requirements.txt   then   streamlit run app.py
+# Tested with: streamlit 1.65, langgraph 1.2, langchain-groq 1.1, pydantic 2.13, fpdf2 2.8
 
-# Core Dependencies
-streamlit>=1.31.0
-python-dotenv>=1.0.0
+streamlit>=1.40,<2
+python-dotenv>=1.0,<2
+pandas>=2.0,<4
+pydantic>=2.5,<3
+requests>=2.31,<3
 
-# LangChain & LangGraph
-langchain>=0.1.0
-langchain-groq>=0.0.1
-langchain-community>=0.0.20
-langchain-core>=0.1.0
-langgraph>=0.0.20
+# AI agent
+langgraph>=1.0,<2
+langchain-core>=1.0,<2
+langchain-groq>=1.0,<2
 
-# Search Tools
-tavily-python>=0.3.0
-duckduckgo-search>=4.0.0
+# Web search (Tavily first, DuckDuckGo as the free backup)
+tavily-python>=0.5,<1
+ddgs>=9.0,<10
 
-# HTTP & Requests
-requests>=2.31.0
-httpx>=0.25.0
-
-# Data Processing
-typing-extensions>=4.9.0
-
-# Optional: For future enhancements
-# folium>=0.15.0  # For maps
-# plotly>=5.18.0  # For visualizations
-# pandas>=2.1.0   # For data analysis
+# PDF export
+fpdf2>=2.8,<3

@@ -1,57 +1,61 @@
 """
-TripGenie - AI Travel Planner
-Main entry point
+Command-line version of TripGenie. Handy for a quick test without opening the web app.
+
+Example:
+    python main.py "Kota, Rajasthan, India" "New Delhi, India" --days 3 --people 2
 """
+import argparse
 import sys
-from pathlib import Path
+import uuid
+from datetime import date, timedelta
+from functools import partial
 
-# Add current directory to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from utils.logger import setup_logging, get_logger
 from config.settings import settings
-
-# Setup logging
-setup_logging()
-logger = get_logger(__name__)
-
-logger.info("=" * 80)
-logger.info(f"TripGenie v{settings.version} - Starting")
-logger.info("=" * 80)
+from models import TripRequest
+from services.agent_service import PlanError, TripGenieAgent
+from services.export_service import plan_to_markdown
+from utils.formatters import format_money
+from utils.logger import setup_logging
+from utils.validators import ValidationError, validate_trip_request
 
 
-def main():
-    """Main entry point"""
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Make a trip plan from the command line.")
+    parser.add_argument("from_city", help="where you start")
+    parser.add_argument("to_city", help="where you want to go")
+    parser.add_argument("--days", type=int, default=3)
+    parser.add_argument("--people", type=int, default=2)
+    parser.add_argument("--start-date", default=(date.today() + timedelta(days=14)).isoformat())
+    args = parser.parse_args()
+
+    # Friendly message instead of a crash when the key is missing
+    if settings.api.missing_keys():
+        print(f"Missing API key: {', '.join(settings.api.missing_keys())}. Add it to your .env file.")
+        return 1
+
+    setup_logging()
+    request = TripRequest(
+        from_city=args.from_city,
+        to_city=args.to_city,
+        start_date=args.start_date,
+        days=args.days,
+        people=args.people,
+    )
     try:
-        from services.agent_service import TripGenieAgent
-        from services.location_service import LocationService
-        
-        logger.info("Initializing services...")
-        
+        request = validate_trip_request(request)
         agent = TripGenieAgent()
-        location_service = LocationService()
-        
-        logger.info("Services initialized successfully")
-        logger.info("TripGenie is ready!")
-        
-        # Example usage
-        print("\n" + "=" * 80)
-        print("TripGenie - AI Travel Planner")
-        print("=" * 80)
-        print("\nTo run the web interface:")
-        print("  streamlit run ui/app.py")
-        print("\nFor programmatic usage, import:")
-        print("  from services.agent_service import TripGenieAgent")
-        print("  agent = TripGenieAgent()")
-        print("  plan = agent.generate_trip_plan('Your query here')")
-        print("=" * 80 + "\n")
-        
-    except Exception as e:
-        logger.error("Failed to initialize TripGenie", exc=e)
-        print(f"\n❌ Error: {e}")
-        print("Please check your .env file and ensure all API keys are set.\n")
-        sys.exit(1)
+        thread_id = uuid.uuid4().hex
+        for step in agent.start_trip(request, thread_id):
+            print(f"  done: {step}")
+        plan = agent.get_plan(thread_id)
+    except (ValidationError, PlanError) as error:
+        print(f"Error: {error}")
+        return 1
+
+    print()
+    print(plan_to_markdown(plan, partial(format_money, currency="INR", rate=1.0)))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

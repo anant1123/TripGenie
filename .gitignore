@@ -34,7 +34,7 @@ ENV/
 *~
 .DS_Store
 
-# Environment Variables
+# Environment Variables (keep .env.example, it has no real keys)
 .env
 .env.local
 .env.*.local
@@ -43,7 +43,7 @@ ENV/
 logs/
 *.log
 
-# Data
+# Data (your saved trips are private)
 data/*.json
 !data/.gitkeep
 
@@ -51,8 +51,9 @@ data/*.json
 .cache/
 *.cache
 
-# Testing
+# Testing and tools
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/
@@ -62,10 +63,12 @@ htmlcov/
 
 # OS
 Thumbs.db
-.DS_Store
 
 # Temporary files
 *.tmp
 *.temp
 tmp/
 temp/
+
+# Backup of the files before the big update (safe to delete when you are happy)
+_backup_original/

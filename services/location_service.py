@@ -1,10 +1,10 @@
-"""
-Location search service using OpenStreetMap Nominatim
-"""
+"""Location search using OpenStreetMap Nominatim (free, no API key)."""
+import threading
 import time
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
 import requests
-from typing import List, Dict, Optional
-from dataclasses import dataclass, asdict
 
 from config.settings import settings
 from utils.logger import get_logger
@@ -14,159 +14,103 @@ logger = get_logger(__name__)
 
 @dataclass
 class Location:
-    """Location data model"""
-    name: str
-    label: str
+    """One place found by the search."""
+
+    label: str  # full name shown in the picker, e.g. "Kota, Ladpura Tehsil, Kota, Rajasthan, India"
     lat: float
     lon: float
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    
+    city: str = ""
+    state: str = ""
+    country: str = ""
+
     @classmethod
-    def from_nominatim(cls, data: Dict) -> 'Location':
-        """
-        Create Location from Nominatim API response
-        
-        Args:
-            data: Nominatim API response dictionary
-            
-        Returns:
-            Location instance
-        """
+    def from_nominatim(cls, data: dict) -> "Location":
+        """Build a Location from one Nominatim result. Raises KeyError/ValueError if lat/lon are missing."""
         address = data.get("address", {})
-        display_name = data.get("display_name", "")
-        
         return cls(
-            name=display_name,
-            label=display_name,
-            lat=float(data.get("lat", 0)),
-            lon=float(data.get("lon", 0)),
-            city=address.get("city") or address.get("town") or address.get("village"),
-            state=address.get("state"),
-            country=address.get("country")
+            label=data.get("display_name", ""),
+            lat=float(data["lat"]),
+            lon=float(data["lon"]),
+            city=address.get("city") or address.get("town") or address.get("village") or "",
+            state=address.get("state", ""),
+            country=address.get("country", ""),
         )
-    
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
-        return asdict(self)
-    
-    def __str__(self) -> str:
-        """String representation"""
-        parts = []
-        if self.city:
-            parts.append(self.city)
-        if self.state:
-            parts.append(self.state)
-        if self.country:
-            parts.append(self.country)
-        return ", ".join(parts) if parts else self.label
+
+    def short_name(self) -> str:
+        """A short readable name: 'Kota, Rajasthan, India'."""
+        parts = [part for part in (self.city, self.state, self.country) if part]
+        if parts:
+            return ", ".join(parts)
+        # No address details (for example a landmark): use the first parts of the long name
+        return ", ".join(self.label.split(", ")[:3])
 
 
 class LocationService:
-    """Service for location search operations"""
-    
+    """Searches places. Results are remembered, so repeated searches cost nothing."""
+
     def __init__(self):
-        """Initialize location service with configuration"""
-        self.base_url = settings.location.nominatim_url
-        self.user_agent = settings.location.user_agent
-        self.rate_limit_delay = settings.location.rate_limit_delay
-        self.max_results = settings.location.max_results
-        self.timeout = settings.location.timeout
-        self._last_request_time = 0
-        
-        logger.info("LocationService initialized")
-    
-    def _respect_rate_limit(self) -> None:
-        """Ensure we don't exceed rate limits"""
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self.rate_limit_delay:
-            time.sleep(self.rate_limit_delay - elapsed)
-        self._last_request_time = time.time()
-    
-    def search(self, query: str) -> List[Location]:
-        """
-        Search for locations by query string
-        
-        Args:
-            query: Search query (e.g., "Paris", "New York, USA")
-            
-        Returns:
-            List of Location objects
-        """
-        if not query or not query.strip():
-            logger.warning("Empty search query")
+        self.config = settings.location
+        self._cache: Dict[str, Tuple[float, List[Location]]] = {}
+        self._last_request_time = 0.0
+        # Many visitors share one LocationService, so requests wait for each other
+        # (Nominatim allows only 1 request per second).
+        self._lock = threading.Lock()
+
+    def search(self, query: str, limit: Optional[int] = None) -> List[Location]:
+        """Find places that match the text. Returns an empty list if nothing is found."""
+        query = (query or "").strip()
+        if len(query) < 2:
             return []
-        
-        try:
-            self._respect_rate_limit()
-            
-            params = {
-                "q": query.strip(),
-                "format": "json",
-                "addressdetails": 1,
-                "limit": self.max_results
-            }
-            
-            headers = {
-                "User-Agent": self.user_agent
-            }
-            
-            logger.info(f"Searching location: {query}")
-            start_time = time.time()
-            
-            response = requests.get(
-                self.base_url,
-                params=params,
-                headers=headers,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            duration = time.time() - start_time
-            results = response.json()
-            locations = [Location.from_nominatim(r) for r in results]
-            
-            logger.log_search(query, len(locations), duration)
-            
-            return locations
-            
-        except requests.Timeout:
-            logger.error(f"Location search timeout for query: {query}")
+
+        limit = limit or self.config.max_results
+        cache_key = f"{query.lower()}|{limit}"
+        cached = self._cache.get(cache_key)
+        if cached and time.time() - cached[0] < self.config.cache_seconds:
+            return cached[1]
+
+        locations = self._fetch(query, limit)
+        if locations is None:  # network problem: do not remember it, try again next time
             return []
-        except requests.RequestException as e:
-            logger.error(f"Location search failed for '{query}'", exc=e)
-            return []
-        except Exception as e:
-            logger.error(f"Unexpected error in location search", exc=e)
-            return []
-    
-    def get_coordinates(self, query: str) -> Optional[tuple[float, float]]:
-        """
-        Get latitude and longitude for a location
-        
-        Args:
-            query: Location query
-            
-        Returns:
-            Tuple of (lat, lon) or None if not found
-        """
-        locations = self.search(query)
-        if locations:
-            return (locations[0].lat, locations[0].lon)
-        return None
-    
-    def get_location_details(self, query: str) -> Optional[Location]:
-        """
-        Get detailed information for a location
-        
-        Args:
-            query: Location query
-            
-        Returns:
-            Location object or None if not found
-        """
-        locations = self.search(query)
-        if locations:
-            return locations[0]
-        return None
+        self._cache[cache_key] = (time.time(), locations)
+        return locations
+
+    def geocode_place(self, place: str, near: str) -> Optional[Tuple[float, float]]:
+        """Find the coordinates of one place near a city. Returns (lat, lon) or None."""
+        results = self.search(f"{place}, {near}", limit=1)
+        return (results[0].lat, results[0].lon) if results else None
+
+    def _fetch(self, query: str, limit: int) -> Optional[List[Location]]:
+        """Call Nominatim. Returns None if the request failed."""
+        params = {"q": query, "format": "json", "limit": limit, "addressdetails": 1}
+        headers = {"User-Agent": self.config.user_agent}
+
+        with self._lock:
+            # Wait if the last request was less than 1 second ago
+            wait = self.config.rate_limit_delay - (time.time() - self._last_request_time)
+            if wait > 0:
+                time.sleep(wait)
+            start = time.time()
+            try:
+                response = requests.get(
+                    self.config.nominatim_url,
+                    params=params,
+                    headers=headers,
+                    timeout=self.config.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (requests.RequestException, ValueError) as error:
+                logger.error(f"Location search failed for '{query}': {error}")
+                return None
+            finally:
+                self._last_request_time = time.time()
+
+        locations = []
+        for item in data:
+            try:
+                locations.append(Location.from_nominatim(item))
+            except (KeyError, ValueError, TypeError):
+                continue  # skip results without usable coordinates
+
+        logger.log_search(query, len(locations), time.time() - start)
+        return locations

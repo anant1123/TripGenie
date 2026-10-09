@@ -1,6 +1,1 @@
-"""Services package for TripGenie"""
-from .location_service import LocationService, Location
-from .agent_service import TripGenieAgent
-from .storage_service import TripStorage
-
-__all__ = ['LocationService', 'Location', 'TripGenieAgent', 'TripStorage']
+"""Services package for TripGenie (search, AI agent, budget, weather, storage, export ...)."""

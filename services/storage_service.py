@@ -1,12 +1,21 @@
 """
-Storage service for trip history
+Saves the trip history.
+
+Two modes (chosen by STORAGE_MODE in .env, see config/settings.py):
+- file mode:   history is saved in data/trip_history.json   (running on your own computer)
+- memory mode: history only lives in the visitor's session  (public website, so people
+               never see each other's trips)
 """
 import json
-from pathlib import Path
+import os
+import threading
+import uuid
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
-from typing import List, Dict, Optional
-from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Dict, List, Optional
 
+from models import TripRequest
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -14,233 +23,159 @@ logger = get_logger(__name__)
 
 @dataclass
 class TripRecord:
-    """Trip record data model"""
+    """One saved trip."""
+
     id: str
     timestamp: str
     from_city: str
     to_city: str
     days: int
     people: int
-    group_type: str
-    trip_plan: str
-    
-    def to_dict(self) -> Dict:
-        """Convert to dictionary"""
-        return asdict(self)
-    
+    group_type: str = ""
+    start_date: str = ""
+    plan: dict = field(default_factory=dict)  # the TripPlan as a dict
+    legacy_text: str = ""  # trips saved by version 1 were plain text
+
     @classmethod
-    def from_dict(cls, data: Dict) -> 'TripRecord':
-        """Create from dictionary"""
-        return cls(**data)
+    def from_dict(cls, data: dict) -> "TripRecord":
+        data = dict(data)
+        if "trip_plan" in data:  # old name used by version 1
+            data["legacy_text"] = data.pop("trip_plan")
+        known = {item.name for item in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in known})
 
 
 class TripStorage:
-    """Service for storing and retrieving trip history"""
-    
-    def __init__(self, storage_path: str = "data/trip_history.json"):
-        """
-        Initialize storage service
-        
-        Args:
-            storage_path: Path to storage file
-        """
-        self.storage_path = Path(storage_path)
-        self.storage_path.parent.mkdir(exist_ok=True)
-        
-        # Initialize file if it doesn't exist
-        if not self.storage_path.exists():
-            self._write_data([])
-        
-        logger.info(f"TripStorage initialized: {storage_path}")
-    
-    def _read_data(self) -> List[Dict]:
-        """Read data from storage file"""
-        try:
-            with open(self.storage_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            logger.error("Failed to decode JSON from storage file")
-            return []
-        except Exception as e:
-            logger.error(f"Failed to read storage file", exc=e)
-            return []
-    
-    def _write_data(self, data: List[Dict]) -> bool:
-        """Write data to storage file"""
-        try:
-            with open(self.storage_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to write to storage file", exc=e)
-            return False
-    
-    def save_trip(
-        self,
-        from_city: str,
-        to_city: str,
-        days: int,
-        people: int,
-        group_type: str,
-        trip_plan: str
-    ) -> Optional[str]:
-        """
-        Save a trip record
-        
-        Args:
-            from_city: Departure city
-            to_city: Destination city
-            days: Trip duration
-            people: Number of travelers
-            group_type: Type of group (Solo, Couple, etc.)
-            trip_plan: Generated trip plan
-            
-        Returns:
-            Trip ID if successful, None otherwise
-        """
-        try:
-            trip_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-            timestamp = datetime.now().isoformat()
-            
-            trip_record = TripRecord(
-                id=trip_id,
-                timestamp=timestamp,
-                from_city=from_city,
-                to_city=to_city,
-                days=days,
-                people=people,
-                group_type=group_type,
-                trip_plan=trip_plan
-            )
-            
-            data = self._read_data()
-            data.append(trip_record.to_dict())
-            
-            if self._write_data(data):
-                logger.info(f"Trip saved successfully: {trip_id}")
-                return trip_id
-            else:
-                return None
-                
-        except Exception as e:
-            logger.error("Failed to save trip", exc=e)
-            return None
-    
-    def get_trip(self, trip_id: str) -> Optional[TripRecord]:
-        """
-        Get a specific trip by ID
-        
-        Args:
-            trip_id: Trip ID
-            
-        Returns:
-            TripRecord if found, None otherwise
-        """
-        try:
-            data = self._read_data()
-            for record in data:
-                if record.get('id') == trip_id:
-                    return TripRecord.from_dict(record)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get trip {trip_id}", exc=e)
-            return None
-    
-    def get_all_trips(self, limit: Optional[int] = None) -> List[TripRecord]:
-        """
-        Get all trip records
-        
-        Args:
-            limit: Maximum number of records to return
-            
-        Returns:
-            List of TripRecord objects
-        """
-        try:
-            data = self._read_data()
-            # Sort by timestamp descending (newest first)
-            data.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-            
-            if limit:
-                data = data[:limit]
-            
-            return [TripRecord.from_dict(record) for record in data]
-        except Exception as e:
-            logger.error("Failed to get all trips", exc=e)
-            return []
-    
-    def delete_trip(self, trip_id: str) -> bool:
-        """
-        Delete a trip record
-        
-        Args:
-            trip_id: Trip ID to delete
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            data = self._read_data()
-            original_length = len(data)
-            
-            data = [record for record in data if record.get('id') != trip_id]
-            
-            if len(data) < original_length:
-                if self._write_data(data):
-                    logger.info(f"Trip deleted: {trip_id}")
+    """Save, list, update and delete trips."""
+
+    def __init__(self, storage_path: Optional[Path] = None):
+        """storage_path=None means memory mode."""
+        self.path = Path(storage_path) if storage_path else None
+        self._memory_records: List[Dict] = []
+        # Many visitors can use the app at the same time, so one change happens at a time
+        self._lock = threading.Lock()
+
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if not self.path.exists():
+                self._write_all([])
+
+    # ------------------------------------------------------------------
+    # Public methods
+    # ------------------------------------------------------------------
+    def save_trip(self, request: TripRequest, plan: dict) -> str:
+        """Save a new trip and return its id."""
+        record = TripRecord(
+            id=uuid.uuid4().hex[:12],  # random id, so two saves can never clash
+            timestamp=datetime.now().isoformat(timespec="seconds"),
+            from_city=request.from_city,
+            to_city=request.to_city,
+            days=request.days,
+            people=request.people,
+            group_type=request.group_type,
+            start_date=request.start_date,
+            plan=plan,
+        )
+        with self._lock:
+            records = self._read_all()
+            records.append(asdict(record))
+            self._write_all(records)
+        logger.info(f"Saved trip {record.id}")
+        return record.id
+
+    def update_plan(self, trip_id: str, plan: dict) -> bool:
+        """Replace the plan of a saved trip (used after a follow-up change)."""
+        with self._lock:
+            records = self._read_all()
+            for record in records:
+                if record.get("id") == trip_id:
+                    record["plan"] = plan
+                    self._write_all(records)
                     return True
-            
-            return False
-        except Exception as e:
-            logger.error(f"Failed to delete trip {trip_id}", exc=e)
-            return False
-    
-    def clear_all(self) -> bool:
-        """
-        Clear all trip records
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            if self._write_data([]):
-                logger.info("All trips cleared")
-                return True
-            return False
-        except Exception as e:
-            logger.error("Failed to clear trips", exc=e)
-            return False
-    
-    def export_trip_to_text(self, trip_id: str, output_path: str) -> bool:
-        """
-        Export trip plan to text file
-        
-        Args:
-            trip_id: Trip ID
-            output_path: Output file path
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            trip = self.get_trip(trip_id)
-            if not trip:
+        return False
+
+    def get_all_trips(self, limit: Optional[int] = None) -> List[TripRecord]:
+        """All saved trips, newest first."""
+        with self._lock:
+            raw_records = self._read_all()
+
+        trips = []
+        for raw in raw_records:
+            try:
+                trips.append(TripRecord.from_dict(raw))
+            except TypeError:
+                logger.warning("Skipped a saved trip that could not be read")
+        trips.sort(key=lambda trip: trip.timestamp, reverse=True)
+        return trips[:limit] if limit else trips
+
+    def delete_trip(self, trip_id: str) -> bool:
+        """Delete one trip. Returns False if it was not found."""
+        with self._lock:
+            records = self._read_all()
+            kept = [record for record in records if record.get("id") != trip_id]
+            if len(kept) == len(records):
                 return False
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(f"TripGenie Trip Plan\n")
-                f.write(f"=" * 80 + "\n\n")
-                f.write(f"From: {trip.from_city}\n")
-                f.write(f"To: {trip.to_city}\n")
-                f.write(f"Duration: {trip.days} days\n")
-                f.write(f"Travelers: {trip.people} ({trip.group_type})\n")
-                f.write(f"Generated: {trip.timestamp}\n\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(trip.trip_plan)
-            
-            logger.info(f"Trip exported to {output_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to export trip {trip_id}", exc=e)
-            return False
+            self._write_all(kept)
+        return True
+
+    def clear_all(self) -> None:
+        """Delete every saved trip."""
+        with self._lock:
+            self._write_all([])
+
+    def export_json(self) -> str:
+        """All trips as JSON text (for a download button)."""
+        with self._lock:
+            return json.dumps(self._read_all(), indent=2, ensure_ascii=False)
+
+    def import_json(self, text: str) -> int:
+        """Add trips from JSON text made by export_json(). Returns how many were added."""
+        try:
+            imported = json.loads(text)
+        except json.JSONDecodeError:
+            return 0
+        if not isinstance(imported, list):
+            return 0
+
+        with self._lock:
+            records = self._read_all()
+            known_ids = {record.get("id") for record in records}
+            added = 0
+            for item in imported:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("id") in known_ids or not item.get("id"):
+                    item["id"] = uuid.uuid4().hex[:12]
+                known_ids.add(item["id"])
+                records.append(item)
+                added += 1
+            self._write_all(records)
+        return added
+
+    # ------------------------------------------------------------------
+    # Reading and writing (the lock is already held when these are called)
+    # ------------------------------------------------------------------
+    def _read_all(self) -> List[Dict]:
+        if self.path is None:
+            return list(self._memory_records)
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            # The file is damaged. Move it aside (do NOT lose it) and start with an empty list.
+            broken = self.path.with_name(f"{self.path.stem}.damaged-{datetime.now():%Y%m%d-%H%M%S}.json")
+            self.path.replace(broken)
+            logger.error(f"History file was damaged. It was moved to {broken.name}")
+            return []
+        except FileNotFoundError:
+            return []
+
+    def _write_all(self, records: List[Dict]) -> None:
+        if self.path is None:
+            self._memory_records = list(records)
+            return
+        # Write to a temporary file first, then swap it in. If the computer crashes
+        # half-way, the old history file is still complete.
+        temp_path = self.path.with_name(self.path.name + ".tmp")
+        temp_path.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(temp_path, self.path)
