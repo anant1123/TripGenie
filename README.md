@@ -10,6 +10,14 @@ Instead of letting a language model invent prices and "cite" searches it never r
 
 ---
 
+## 🎬 Project Demo
+
+Watch the TripGenie demo:
+
+https://github.com/user-attachments/assets/dc26e27f-523c-49cf-8f51-85723e8f052f
+
+---
+
 ## Table of contents
 
 - [Features](#features)
@@ -113,8 +121,8 @@ LangGraph's in-memory checkpointer keeps the plan for each conversation, which i
 ### Installation
 
 ```bash
-git clone https://github.com/anant1123/Trip_Planner-Agent.git
-cd Trip_Planner-Agent
+git clone https://github.com/anant1123/TripGenie.git
+cd TripGenie
 
 # Create and activate a virtual environment
 python -m venv .venv
@@ -199,8 +207,7 @@ Everything else (model names, search limits, trip length, cache times) is in [`c
 ├── ui/
 │   ├── form.py             # Planning form
 │   ├── results.py          # Plan view, map, downloads
-│   ├── history.py          # History tab
-│   └── styles.py           # CSS and the tips page
+│   └── history.py          # History tab
 ├── utils/                  # Logging, input validation, formatting
 ├── tests/                  # Unit tests and a Streamlit smoke test
 ├── .github/workflows/      # CI (Ruff + pytest)
@@ -299,7 +306,7 @@ TripGenie is a planning aid, not a booking engine. Please keep these in mind:
 | Problem | What to do |
 |---------|------------|
 | "Missing API key: GROQ_API_KEY" | Create `.env` from `.env.example` and restart the app. |
-| `401 Invalid API Key` in the log | Create a new key in the Groq console and update `.env`. |
+| `401 Invalid API Key` in the log | Create a new key in the Groq console and update `GROQ_API_KEY`. |
 | `404 model_not_found` in the log | Model names can change. Pick a current model in the Groq console and update `model_name` in `config/settings.py`. |
 | Tavily connection errors | Nothing to do. TripGenie falls back to DuckDuckGo automatically. |
 | "Could not find these places on the map" | The plan used generic place names. Try again or ask for specific named places. |
