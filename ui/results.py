@@ -184,7 +184,11 @@ def _render_downloads(plan: TripPlan, start_date: str, money, key_prefix: str) -
     col1, col2, col3 = st.columns(3)
 
     col1.download_button(
-        "Text (.md)", plan_to_markdown(plan, money), file_name=f"{name}.md", mime="text/markdown", key=f"{key_prefix}_md"
+        "Text (.md)",
+        plan_to_markdown(plan, money),
+        file_name=f"{name}.md",
+        mime="text/markdown",
+        key=f"{key_prefix}_md",
     )
     try:
         col2.download_button(

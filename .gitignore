@@ -72,3 +72,7 @@ temp/
 
 # Backup of the files before the big update (safe to delete when you are happy)
 _backup_original/
+
+# Streamlit agent skills (environment-specific symlinks created by "streamlit run")
+.agents/
+.claude/

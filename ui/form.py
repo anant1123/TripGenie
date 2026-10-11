@@ -25,7 +25,13 @@ def _pick_place(label: str, placeholder: str, key: str, location_service: Locati
         return None
 
     labels = [place.label for place in places]
-    chosen = st.selectbox("Pick the right place", labels, key=f"{key}_choice")
+    # index=None means nothing is pre-selected. Otherwise the first search result would be
+    # used silently, and it is often not the place the user meant.
+    chosen = st.selectbox(
+        "Pick the right place", labels, index=None, placeholder="Choose the correct place", key=f"{key}_choice"
+    )
+    if chosen is None:
+        return None
     return places[labels.index(chosen)]
 
 
@@ -57,7 +63,9 @@ def render_form(location_service: LocationService) -> Optional[TripRequest]:
         group_type = st.selectbox("Group type", ["Solo", "Couple", "Family", "Friends", "Business"], index=3)
         transport = st.selectbox("Transport", ["Any", "Train", "Flight", "Bus", "Car"])
     with col2:
-        hotel_budget = st.select_slider("Hotel budget per night", options=list(HOTEL_BUDGETS), value="Economy (₹1000-3000)")
+        hotel_budget = st.select_slider(
+            "Hotel budget per night", options=list(HOTEL_BUDGETS), value="Economy (₹1000-3000)"
+        )
         total_budget = st.number_input(
             "Total budget per person in ₹ (0 = no limit)", min_value=0, value=0, step=1000
         )

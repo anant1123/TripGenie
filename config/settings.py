@@ -120,7 +120,7 @@ class StorageConfig:
                  so people never see each other's trips)
     """
 
-    mode: str = field(default_factory=lambda: os.getenv("STORAGE_MODE", "local").lower())
+    mode: str = field(default_factory=lambda: (get_secret("STORAGE_MODE") or "local").lower())
     history_file: Path = PROJECT_ROOT / "data" / "trip_history.json"
 
 

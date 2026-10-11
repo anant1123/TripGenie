@@ -234,4 +234,11 @@ class TripGenieAgent:
                     last_error = error
                     logger.warning(f"The AI model failed (attempt {attempt + 1}): {error}")
                     time.sleep(1)
-        raise PlanError(f"The AI could not write the plan. Please try again. ({last_error})")
+        if "tool_use_failed" in str(last_error):
+            # Groq sends this when the AI's answer is cut off or is not valid JSON.
+            # It happens mostly with long trips, because the answer becomes very long.
+            raise PlanError(
+                "The AI could not write the plan because its answer was too long or got cut off. "
+                "Try a shorter trip (5 days or fewer) and try again."
+            )
+        raise PlanError(f"The AI could not write the plan. Please try again. ({str(last_error)[:200]})")

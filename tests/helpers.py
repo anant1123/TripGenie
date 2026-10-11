@@ -97,7 +97,11 @@ class FakeSearchService:
     def search(self, query):
         self.queries.append(query)
         return [
-            {"title": f"Result A for {query}", "url": f"https://example.com/a?q={query}", "snippet": "Ticket costs 1000."},
+            {
+                "title": f"Result A for {query}",
+                "url": f"https://example.com/a?q={query}",
+                "snippet": "Ticket costs 1000.",
+            },
             {"title": "Shared page", "url": "https://example.com/shared", "snippet": "Hotel costs 2000."},
         ]
 

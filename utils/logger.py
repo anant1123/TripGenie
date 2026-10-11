@@ -42,7 +42,7 @@ def setup_logging(log_level: str = "INFO", log_to_file: bool = True) -> None:
         root.addHandler(file_handler)
 
     # These libraries are very chatty, only show their warnings
-    for noisy in ("httpx", "httpcore", "urllib3", "asyncio", "streamlit"):
+    for noisy in ("httpx", "httpcore", "urllib3", "asyncio", "streamlit", "primp", "ddgs"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     logging.getLogger(__name__).info("Logging started")
